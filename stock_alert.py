@@ -2,12 +2,14 @@ import os
 import json
 import requests
 import pandas as pd
-from pykrx import stock
+from io import StringIO
 from datetime import datetime
 
 REST_API_KEY = os.environ["KAKAO_REST_API_KEY"]
 CLIENT_SECRET = os.environ["KAKAO_CLIENT_SECRET"]
 REFRESH_TOKEN = os.environ["KAKAO_REFRESH_TOKEN"]
+
+HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
 
 def get_access_token():
@@ -21,16 +23,40 @@ def get_access_token():
     return res.json()["access_token"]
 
 
+def fetch_rank(sosok, page_type):
+    url = f"https://finance.naver.com/sise/{page_type}.naver?sosok={sosok}"
+    res = requests.get(url, headers=HEADERS)
+    res.encoding = "euc-kr"
+    tables = pd.read_html(StringIO(res.text))
+    for df in tables:
+        if "종목명" in df.columns:
+            df = df[["종목명", "현재가", "등락률"]].dropna()
+            df = df[df["종목명"].str.strip() != "종목명"]
+            df["등락률"] = (
+                df["등락률"].astype(str)
+                .str.replace("%", "").str.replace("+", "")
+                .astype(float)
+            )
+            df["현재가"] = (
+                df["현재가"].astype(str)
+                .str.replace(",", "")
+                .astype(float).astype(int)
+            )
+            return df.head(10).reset_index(drop=True)
+    return pd.DataFrame()
+
+
 def get_top_movers():
-    today = datetime.now().strftime("%Y%m%d")
+    top_rise = pd.concat([
+        fetch_rank("0", "sise_rise"),
+        fetch_rank("1", "sise_rise"),
+    ]).nlargest(10, "등락률").reset_index(drop=True)
 
-    kospi = stock.get_market_ohlcv_by_ticker(today, market="KOSPI")
-    kosdaq = stock.get_market_ohlcv_by_ticker(today, market="KOSDAQ")
-    df = pd.concat([kospi, kosdaq])
-    df = df[df["거래량"] > 0]
+    top_fall = pd.concat([
+        fetch_rank("0", "sise_fall"),
+        fetch_rank("1", "sise_fall"),
+    ]).nsmallest(10, "등락률").reset_index(drop=True)
 
-    top_rise = df.nlargest(10, "등락률")
-    top_fall = df.nsmallest(10, "등락률")
     return top_rise, top_fall
 
 
@@ -39,14 +65,12 @@ def format_message(top_rise, top_fall):
     lines = [f"[국내 증시 알림] {today}\n"]
 
     lines.append("📈 급등 Top 10")
-    for i, (ticker, row) in enumerate(top_rise.iterrows(), 1):
-        name = stock.get_market_ticker_name(ticker)
-        lines.append(f"{i}. {name}  {row['등락률']:+.1f}%  {int(row['종가']):,}원")
+    for i, row in top_rise.iterrows():
+        lines.append(f"{i+1}. {row['종목명']}  {row['등락률']:+.1f}%  {row['현재가']:,}원")
 
     lines.append("\n📉 급락 Top 10")
-    for i, (ticker, row) in enumerate(top_fall.iterrows(), 1):
-        name = stock.get_market_ticker_name(ticker)
-        lines.append(f"{i}. {name}  {row['등락률']:+.1f}%  {int(row['종가']):,}원")
+    for i, row in top_fall.iterrows():
+        lines.append(f"{i+1}. {row['종목명']}  {row['등락률']:+.1f}%  {row['현재가']:,}원")
 
     return "\n".join(lines)
 
