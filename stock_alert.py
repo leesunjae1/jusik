@@ -49,6 +49,7 @@ def fetch_rank(sosok, page_type):
                         codes.append(a["href"].split("code=")[-1])
 
             df["코드"] = pd.Series(codes[:len(df)])
+            print(f"[DEBUG] codes extracted: {codes[:3]}")
             return df
 
     return pd.DataFrame()
@@ -105,8 +106,10 @@ def format_message(top_rise, top_fall):
     lines.append("📈 급등 Top 10")
     for i, row in top_rise.iterrows():
         lines.append(f"{i+1}. {row['종목명']}  {row['등락률']:+.1f}%  {int(row['현재가']):,}원")
-        if pd.notna(row.get("코드")):
-            headline = get_news_headline(row["코드"], debug=(i == 0))
+        code = row.get("코드")
+        print(f"[DEBUG] row {i} code={code}")
+        if pd.notna(code):
+            headline = get_news_headline(code, debug=(i == 0))
             if headline:
                 lines.append(f"   └ {headline}")
 
