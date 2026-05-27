@@ -2,6 +2,7 @@ import os
 import json
 import requests
 import pandas as pd
+from io import StringIO
 from bs4 import BeautifulSoup
 from datetime import datetime
 
@@ -27,32 +28,30 @@ def fetch_rank(sosok, page_type):
     url = f"https://finance.naver.com/sise/{page_type}.naver?sosok={sosok}"
     res = requests.get(url, headers=HEADERS)
     res.encoding = "euc-kr"
-    soup = BeautifulSoup(res.text, "lxml")
 
-    rows = []
-    table = soup.find("table", class_="type_2")
-    if not table:
-        return pd.DataFrame()
+    # pd.read_html로 정확한 수치 추출
+    for df in pd.read_html(StringIO(res.text)):
+        if "종목명" in df.columns and "등락률" in df.columns:
+            df = df[["종목명", "현재가", "등락률"]].dropna()
+            df = df[df["종목명"].str.strip() != "종목명"]
+            df["등락률"] = df["등락률"].astype(str).str.replace("%", "").str.replace("+", "").astype(float)
+            df["현재가"] = df["현재가"].astype(str).str.replace(",", "").astype(float).astype(int)
+            df = df.head(10).reset_index(drop=True)
 
-    for tr in table.find_all("tr"):
-        tds = tr.find_all("td")
-        if len(tds) < 6:
-            continue
-        name_tag = tds[1].find("a")
-        if not name_tag:
-            continue
-        name = name_tag.get_text(strip=True)
-        href = name_tag.get("href", "")
-        code = href.split("code=")[-1] if "code=" in href else ""
-        try:
-            price = int(tds[2].get_text(strip=True).replace(",", ""))
-            rate = float(tds[5].get_text(strip=True).replace("%", "").replace("+", ""))
-        except (ValueError, IndexError):
-            continue
-        if name and code:
-            rows.append({"종목명": name, "코드": code, "현재가": price, "등락률": rate})
+            # BeautifulSoup으로 종목 코드 추출
+            soup = BeautifulSoup(res.text, "lxml")
+            table = soup.find("table", class_="type_2")
+            codes = []
+            if table:
+                for tr in table.find_all("tr"):
+                    a = tr.find("a", href=lambda h: h and "code=" in h)
+                    if a:
+                        codes.append(a["href"].split("code=")[-1])
 
-    return pd.DataFrame(rows).head(10)
+            df["코드"] = pd.Series(codes[:len(df)])
+            return df
+
+    return pd.DataFrame()
 
 
 def get_top_movers():
@@ -71,15 +70,13 @@ def get_top_movers():
 
 def get_news_headline(code):
     try:
-        url = f"https://finance.naver.com/item/news_news.naver?code={code}"
+        url = f"https://finance.naver.com/item/news.naver?code={code}&page=1"
         res = requests.get(url, headers=HEADERS, timeout=5)
         res.encoding = "euc-kr"
         soup = BeautifulSoup(res.text, "lxml")
-        table = soup.find("table", class_="type5")
-        if table:
-            title_td = table.find("td", class_="title")
-            if title_td:
-                title = title_td.get_text(strip=True)
+        for a in soup.select("td.title a"):
+            title = a.get_text(strip=True)
+            if title:
                 return title[:40] + "..." if len(title) > 40 else title
     except Exception:
         pass
@@ -93,16 +90,18 @@ def format_message(top_rise, top_fall):
     lines.append("📈 급등 Top 10")
     for i, row in top_rise.iterrows():
         lines.append(f"{i+1}. {row['종목명']}  {row['등락률']:+.1f}%  {int(row['현재가']):,}원")
-        headline = get_news_headline(row["코드"])
-        if headline:
-            lines.append(f"   └ {headline}")
+        if pd.notna(row.get("코드")):
+            headline = get_news_headline(row["코드"])
+            if headline:
+                lines.append(f"   └ {headline}")
 
     lines.append("\n📉 급락 Top 10")
     for i, row in top_fall.iterrows():
         lines.append(f"{i+1}. {row['종목명']}  {row['등락률']:+.1f}%  {int(row['현재가']):,}원")
-        headline = get_news_headline(row["코드"])
-        if headline:
-            lines.append(f"   └ {headline}")
+        if pd.notna(row.get("코드")):
+            headline = get_news_headline(row["코드"])
+            if headline:
+                lines.append(f"   └ {headline}")
 
     return "\n".join(lines)
 
