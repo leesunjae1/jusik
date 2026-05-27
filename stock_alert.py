@@ -70,13 +70,21 @@ def get_top_movers():
 
 def get_news_headline(code):
     try:
-        url = f"https://finance.naver.com/item/news.naver?code={code}&page=1"
+        url = f"https://finance.naver.com/item/news_news.naver?code={code}"
         res = requests.get(url, headers=HEADERS, timeout=5)
         res.encoding = "euc-kr"
         soup = BeautifulSoup(res.text, "lxml")
-        for a in soup.select("td.title a"):
+
+        for selector in ["td.title a", "td.titles a", "table.type5 td a", ".articleSubject a"]:
+            for a in soup.select(selector):
+                title = a.get_text(strip=True)
+                if len(title) > 5:
+                    return title[:40] + "..." if len(title) > 40 else title
+
+        for a in soup.find_all("a", href=True):
+            href = a.get("href", "")
             title = a.get_text(strip=True)
-            if title:
+            if "news" in href and len(title) > 10:
                 return title[:40] + "..." if len(title) > 40 else title
     except Exception:
         pass
