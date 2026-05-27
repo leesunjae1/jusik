@@ -85,23 +85,22 @@ def get_news_headline(name):
 
 def format_message(top_rise, top_fall):
     today = datetime.now().strftime("%Y-%m-%d")
-    lines = [f"[국내 증시 알림] {today}\n"]
 
-    lines.append("📈 급등 Top 10")
+    rise_lines = [f"[국내 증시 알림] {today}\n", "📈 급등 Top 10"]
     for i, row in top_rise.iterrows():
-        lines.append(f"{i+1}. {row['종목명']}  {row['등락률']:+.1f}%  {int(row['현재가']):,}원")
+        rise_lines.append(f"{i+1}. {row['종목명']}  {row['등락률']:+.1f}%  {int(row['현재가']):,}원")
         headline = get_news_headline(row["종목명"])
         if headline:
-            lines.append(f"   └ {headline}")
+            rise_lines.append(f"   └ {headline}")
 
-    lines.append("\n📉 급락 Top 10")
+    fall_lines = ["📉 급락 Top 10"]
     for i, row in top_fall.iterrows():
-        lines.append(f"{i+1}. {row['종목명']}  {row['등락률']:+.1f}%  {int(row['현재가']):,}원")
+        fall_lines.append(f"{i+1}. {row['종목명']}  {row['등락률']:+.1f}%  {int(row['현재가']):,}원")
         headline = get_news_headline(row["종목명"])
         if headline:
-            lines.append(f"   └ {headline}")
+            fall_lines.append(f"   └ {headline}")
 
-    return "\n".join(lines)
+    return "\n".join(rise_lines), "\n".join(fall_lines)
 
 
 def send_kakao_message(access_token, text):
@@ -126,9 +125,11 @@ if __name__ == "__main__":
     top_rise, top_fall = get_top_movers()
 
     print("뉴스 헤드라인 수집 중...")
-    message = format_message(top_rise, top_fall)
-    print(message)
+    rise_msg, fall_msg = format_message(top_rise, top_fall)
+    print(rise_msg)
+    print(fall_msg)
 
     print("\n카카오톡 전송 중...")
-    result = send_kakao_message(access_token, message)
-    print("전송 결과:", result)
+    result1 = send_kakao_message(access_token, rise_msg)
+    result2 = send_kakao_message(access_token, fall_msg)
+    print("전송 결과:", result1, result2)
