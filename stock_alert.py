@@ -68,12 +68,18 @@ def get_top_movers():
     return top_rise, top_fall
 
 
-def get_news_headline(code):
+def get_news_headline(code, debug=False):
     try:
         url = f"https://finance.naver.com/item/news_news.naver?code={code}"
         res = requests.get(url, headers=HEADERS, timeout=5)
         res.encoding = "euc-kr"
         soup = BeautifulSoup(res.text, "lxml")
+
+        if debug:
+            tables = soup.find_all("table")
+            print(f"[DEBUG {code}] tables: {[t.get('class') for t in tables]}")
+            for t in tables:
+                print(f"[DEBUG] table class={t.get('class')} html={str(t)[:300]}")
 
         for selector in ["td.title a", "td.titles a", "table.type5 td a", ".articleSubject a"]:
             for a in soup.select(selector):
@@ -86,8 +92,9 @@ def get_news_headline(code):
             title = a.get_text(strip=True)
             if "news" in href and len(title) > 10:
                 return title[:40] + "..." if len(title) > 40 else title
-    except Exception:
-        pass
+    except Exception as e:
+        if debug:
+            print(f"[DEBUG] exception: {e}")
     return ""
 
 
@@ -99,7 +106,7 @@ def format_message(top_rise, top_fall):
     for i, row in top_rise.iterrows():
         lines.append(f"{i+1}. {row['종목명']}  {row['등락률']:+.1f}%  {int(row['현재가']):,}원")
         if pd.notna(row.get("코드")):
-            headline = get_news_headline(row["코드"])
+            headline = get_news_headline(row["코드"], debug=(i == 0))
             if headline:
                 lines.append(f"   └ {headline}")
 
