@@ -2,7 +2,7 @@ import os
 import json
 import requests
 import pandas as pd
-from io import StringIO
+from bs4 import BeautifulSoup
 from datetime import datetime
 
 REST_API_KEY = os.environ["KAKAO_REST_API_KEY"]
@@ -27,23 +27,32 @@ def fetch_rank(sosok, page_type):
     url = f"https://finance.naver.com/sise/{page_type}.naver?sosok={sosok}"
     res = requests.get(url, headers=HEADERS)
     res.encoding = "euc-kr"
-    tables = pd.read_html(StringIO(res.text))
-    for df in tables:
-        if "종목명" in df.columns:
-            df = df[["종목명", "현재가", "등락률"]].dropna()
-            df = df[df["종목명"].str.strip() != "종목명"]
-            df["등락률"] = (
-                df["등락률"].astype(str)
-                .str.replace("%", "").str.replace("+", "")
-                .astype(float)
-            )
-            df["현재가"] = (
-                df["현재가"].astype(str)
-                .str.replace(",", "")
-                .astype(float).astype(int)
-            )
-            return df.head(10).reset_index(drop=True)
-    return pd.DataFrame()
+    soup = BeautifulSoup(res.text, "lxml")
+
+    rows = []
+    table = soup.find("table", class_="type_2")
+    if not table:
+        return pd.DataFrame()
+
+    for tr in table.find_all("tr"):
+        tds = tr.find_all("td")
+        if len(tds) < 6:
+            continue
+        name_tag = tds[1].find("a")
+        if not name_tag:
+            continue
+        name = name_tag.get_text(strip=True)
+        href = name_tag.get("href", "")
+        code = href.split("code=")[-1] if "code=" in href else ""
+        try:
+            price = int(tds[2].get_text(strip=True).replace(",", ""))
+            rate = float(tds[5].get_text(strip=True).replace("%", "").replace("+", ""))
+        except (ValueError, IndexError):
+            continue
+        if name and code:
+            rows.append({"종목명": name, "코드": code, "현재가": price, "등락률": rate})
+
+    return pd.DataFrame(rows).head(10)
 
 
 def get_top_movers():
@@ -60,17 +69,40 @@ def get_top_movers():
     return top_rise, top_fall
 
 
+def get_news_headline(code):
+    try:
+        url = f"https://finance.naver.com/item/news_news.naver?code={code}"
+        res = requests.get(url, headers=HEADERS, timeout=5)
+        res.encoding = "euc-kr"
+        soup = BeautifulSoup(res.text, "lxml")
+        table = soup.find("table", class_="type5")
+        if table:
+            title_td = table.find("td", class_="title")
+            if title_td:
+                title = title_td.get_text(strip=True)
+                return title[:40] + "..." if len(title) > 40 else title
+    except Exception:
+        pass
+    return ""
+
+
 def format_message(top_rise, top_fall):
     today = datetime.now().strftime("%Y-%m-%d")
     lines = [f"[국내 증시 알림] {today}\n"]
 
     lines.append("📈 급등 Top 10")
     for i, row in top_rise.iterrows():
-        lines.append(f"{i+1}. {row['종목명']}  {row['등락률']:+.1f}%  {row['현재가']:,}원")
+        lines.append(f"{i+1}. {row['종목명']}  {row['등락률']:+.1f}%  {int(row['현재가']):,}원")
+        headline = get_news_headline(row["코드"])
+        if headline:
+            lines.append(f"   └ {headline}")
 
     lines.append("\n📉 급락 Top 10")
     for i, row in top_fall.iterrows():
-        lines.append(f"{i+1}. {row['종목명']}  {row['등락률']:+.1f}%  {row['현재가']:,}원")
+        lines.append(f"{i+1}. {row['종목명']}  {row['등락률']:+.1f}%  {int(row['현재가']):,}원")
+        headline = get_news_headline(row["코드"])
+        if headline:
+            lines.append(f"   └ {headline}")
 
     return "\n".join(lines)
 
@@ -96,6 +128,7 @@ if __name__ == "__main__":
     print("증시 데이터 수집 중...")
     top_rise, top_fall = get_top_movers()
 
+    print("뉴스 헤드라인 수집 중...")
     message = format_message(top_rise, top_fall)
     print(message)
 
