@@ -77,10 +77,15 @@ def get_news_headline(code, debug=False):
         soup = BeautifulSoup(res.text, "lxml")
 
         if debug:
-            table = soup.find("table", class_="type5")
-            if table:
-                for a in table.find_all("a")[:3]:
-                    print(f"[DEBUG] a href={a.get('href','')} text={repr(a.get_text(strip=True)[:60])}")
+            t = soup.find("table", class_="type5")
+            print(f"[DEBUG news] table found: {t is not None}")
+            if t:
+                all_a = t.find_all("a")
+                print(f"[DEBUG news] link count: {len(all_a)}")
+                for a in all_a[:3]:
+                    print(f"[DEBUG news] href={repr(a.get('href','')[:80])} text={repr(a.get_text(strip=True)[:60])}")
+            else:
+                print(f"[DEBUG news] page snippet: {soup.get_text()[:200]}")
 
         for selector in ["td.title a", "td.titles a", "table.type5 td a", ".articleSubject a"]:
             for a in soup.select(selector):
