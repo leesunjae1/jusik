@@ -76,10 +76,10 @@ def get_news_headline(code, debug=False):
         soup = BeautifulSoup(res.text, "lxml")
 
         if debug:
-            tables = soup.find_all("table")
-            print(f"[DEBUG {code}] tables: {[t.get('class') for t in tables]}")
-            for t in tables:
-                print(f"[DEBUG] table class={t.get('class')} html={str(t)[:300]}")
+            table = soup.find("table", class_="type5")
+            if table:
+                for a in table.find_all("a")[:3]:
+                    print(f"[DEBUG] a href={a.get('href','')} text={repr(a.get_text(strip=True)[:60])}")
 
         for selector in ["td.title a", "td.titles a", "table.type5 td a", ".articleSubject a"]:
             for a in soup.select(selector):
