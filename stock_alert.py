@@ -2,6 +2,7 @@ import os
 import json
 import requests
 import pandas as pd
+import xml.etree.ElementTree as ET
 from io import StringIO
 from bs4 import BeautifulSoup
 from datetime import datetime
@@ -70,11 +71,11 @@ def get_top_movers():
 def get_news_headline(name):
     try:
         query = requests.utils.quote(f"{name} 주가")
-        url = f"https://search.naver.com/search.naver?where=news&query={query}&sort=1"
+        url = f"https://news.google.com/rss/search?q={query}&hl=ko&gl=KR&ceid=KR:ko"
         res = requests.get(url, headers=HEADERS, timeout=5)
-        soup = BeautifulSoup(res.text, "lxml")
-        for a in soup.select("a.news_tit"):
-            title = a.get_text(strip=True)
+        root = ET.fromstring(res.content)
+        for item in root.findall(".//item/title")[:1]:
+            title = (item.text or "").rsplit(" - ", 1)[0].strip()
             if title:
                 return title[:40] + "..." if len(title) > 40 else title
     except Exception:
