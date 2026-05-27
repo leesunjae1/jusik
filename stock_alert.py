@@ -48,8 +48,6 @@ def fetch_rank(sosok, page_type):
                     if a:
                         codes.append(a["href"].split("code=")[-1])
 
-            df["코드"] = pd.Series(codes[:len(df)])
-            print(f"[DEBUG] codes extracted: {codes[:3]}")
             return df
 
     return pd.DataFrame()
@@ -69,38 +67,18 @@ def get_top_movers():
     return top_rise, top_fall
 
 
-def get_news_headline(code, debug=False):
+def get_news_headline(name):
     try:
-        url = f"https://finance.naver.com/item/news_news.naver?code={code}"
+        query = requests.utils.quote(f"{name} 주가")
+        url = f"https://search.naver.com/search.naver?where=news&query={query}&sort=1"
         res = requests.get(url, headers=HEADERS, timeout=5)
-        res.encoding = "euc-kr"
         soup = BeautifulSoup(res.text, "lxml")
-
-        if debug:
-            t = soup.find("table", class_="type5")
-            print(f"[DEBUG news] table found: {t is not None}")
-            if t:
-                all_a = t.find_all("a")
-                print(f"[DEBUG news] link count: {len(all_a)}")
-                for a in all_a[:3]:
-                    print(f"[DEBUG news] href={repr(a.get('href','')[:80])} text={repr(a.get_text(strip=True)[:60])}")
-            else:
-                print(f"[DEBUG news] page snippet: {soup.get_text()[:200]}")
-
-        for selector in ["td.title a", "td.titles a", "table.type5 td a", ".articleSubject a"]:
-            for a in soup.select(selector):
-                title = a.get_text(strip=True)
-                if len(title) > 5:
-                    return title[:40] + "..." if len(title) > 40 else title
-
-        for a in soup.find_all("a", href=True):
-            href = a.get("href", "")
+        for a in soup.select("a.news_tit"):
             title = a.get_text(strip=True)
-            if "news" in href and len(title) > 10:
+            if title:
                 return title[:40] + "..." if len(title) > 40 else title
-    except Exception as e:
-        if debug:
-            print(f"[DEBUG] exception: {e}")
+    except Exception:
+        pass
     return ""
 
 
@@ -111,20 +89,16 @@ def format_message(top_rise, top_fall):
     lines.append("📈 급등 Top 10")
     for i, row in top_rise.iterrows():
         lines.append(f"{i+1}. {row['종목명']}  {row['등락률']:+.1f}%  {int(row['현재가']):,}원")
-        code = row.get("코드")
-        print(f"[DEBUG] row {i} code={code}")
-        if pd.notna(code):
-            headline = get_news_headline(code, debug=(i == 0))
-            if headline:
-                lines.append(f"   └ {headline}")
+        headline = get_news_headline(row["종목명"])
+        if headline:
+            lines.append(f"   └ {headline}")
 
     lines.append("\n📉 급락 Top 10")
     for i, row in top_fall.iterrows():
         lines.append(f"{i+1}. {row['종목명']}  {row['등락률']:+.1f}%  {int(row['현재가']):,}원")
-        if pd.notna(row.get("코드")):
-            headline = get_news_headline(row["코드"])
-            if headline:
-                lines.append(f"   └ {headline}")
+        headline = get_news_headline(row["종목명"])
+        if headline:
+            lines.append(f"   └ {headline}")
 
     return "\n".join(lines)
 
