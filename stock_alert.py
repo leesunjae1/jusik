@@ -5,13 +5,20 @@ import pandas as pd
 import xml.etree.ElementTree as ET
 from io import StringIO
 from bs4 import BeautifulSoup
-from datetime import datetime
+from datetime import datetime, timedelta
 
 REST_API_KEY = os.environ["KAKAO_REST_API_KEY"]
 CLIENT_SECRET = os.environ["KAKAO_CLIENT_SECRET"]
 REFRESH_TOKEN = os.environ["KAKAO_REFRESH_TOKEN"]
+NOTION_TOKEN = os.environ["NOTION_TOKEN"]
+NOTION_DB_ID = os.environ["NOTION_DB_ID"]
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+NOTION_HEADERS = {
+    "Authorization": f"Bearer {NOTION_TOKEN}",
+    "Content-Type": "application/json",
+    "Notion-Version": "2022-06-28",
+}
 
 
 def get_access_token():
@@ -30,7 +37,6 @@ def fetch_rank(sosok, page_type):
     res = requests.get(url, headers=HEADERS)
     res.encoding = "euc-kr"
 
-    # pd.read_html로 정확한 수치 추출
     for df in pd.read_html(StringIO(res.text)):
         if "종목명" in df.columns and "등락률" in df.columns:
             df = df[["종목명", "현재가", "등락률"]].dropna()
@@ -38,17 +44,6 @@ def fetch_rank(sosok, page_type):
             df["등락률"] = df["등락률"].astype(str).str.replace("%", "").str.replace("+", "").astype(float)
             df["현재가"] = df["현재가"].astype(str).str.replace(",", "").astype(float).astype(int)
             df = df.head(10).reset_index(drop=True)
-
-            # BeautifulSoup으로 종목 코드 추출
-            soup = BeautifulSoup(res.text, "lxml")
-            table = soup.find("table", class_="type_2")
-            codes = []
-            if table:
-                for tr in table.find_all("tr"):
-                    a = tr.find("a", href=lambda h: h and "code=" in h)
-                    if a:
-                        codes.append(a["href"].split("code=")[-1])
-
             return df
 
     return pd.DataFrame()
@@ -83,22 +78,81 @@ def get_news_headline(name):
     return ""
 
 
-def format_message(top_rise, top_fall):
+def get_yesterday_names(category):
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    # 주말 처리: 월요일이면 금요일 데이터 조회
+    weekday = datetime.now().weekday()
+    if weekday == 0:  # 월요일
+        yesterday = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")
+
+    res = requests.post(
+        f"https://api.notion.com/v1/databases/{NOTION_DB_ID}/query",
+        headers=NOTION_HEADERS,
+        json={
+            "filter": {
+                "and": [
+                    {"property": "날짜", "date": {"equals": yesterday}},
+                    {"property": "구분", "select": {"equals": category}},
+                ]
+            }
+        },
+    )
+    if res.status_code != 200:
+        return set()
+
+    names = set()
+    for page in res.json().get("results", []):
+        props = page.get("properties", {})
+        title_prop = props.get("종목명", {}).get("title", [])
+        if title_prop:
+            names.add(title_prop[0]["plain_text"])
+    return names
+
+
+def save_to_notion(df, category, yesterday_names):
+    today = datetime.now().strftime("%Y-%m-%d")
+    for i, row in df.iterrows():
+        name = row["종목명"]
+        is_consecutive = name in yesterday_names
+        headline = row.get("뉴스", "")
+
+        page = {
+            "parent": {"database_id": NOTION_DB_ID},
+            "properties": {
+                "종목명": {"title": [{"text": {"content": name}}]},
+                "날짜": {"date": {"start": today}},
+                "구분": {"select": {"name": category}},
+                "순위": {"number": i + 1},
+                "등락률": {"number": float(row["등락률"])},
+                "현재가": {"number": int(row["현재가"])},
+                "뉴스": {"rich_text": [{"text": {"content": headline}}]},
+                "연속여부": {"checkbox": is_consecutive},
+            },
+        }
+        res = requests.post("https://api.notion.com/v1/pages", headers=NOTION_HEADERS, json=page)
+        if res.status_code not in (200, 201):
+            print(f"Notion 저장 실패 ({name}): {res.status_code} {res.text[:200]}")
+
+
+def format_message(top_rise, top_fall, rise_consecutive, fall_consecutive):
     today = datetime.now().strftime("%Y-%m-%d")
 
     rise_lines = [f"[국내 증시 알림] {today}\n", "📈 급등 Top 10"]
     for i, row in top_rise.iterrows():
-        rise_lines.append(f"{i+1}. {row['종목명']}  {row['등락률']:+.1f}%  {int(row['현재가']):,}원")
-        headline = get_news_headline(row["종목명"])
-        if headline:
-            rise_lines.append(f"   └ {headline}")
+        marker = "🔁" if row["종목명"] in rise_consecutive else ""
+        rise_lines.append(f"{i+1}. {marker}{row['종목명']}  {row['등락률']:+.1f}%  {int(row['현재가']):,}원")
+        if row.get("뉴스"):
+            rise_lines.append(f"   └ {row['뉴스']}")
 
     fall_lines = ["📉 급락 Top 10"]
     for i, row in top_fall.iterrows():
-        fall_lines.append(f"{i+1}. {row['종목명']}  {row['등락률']:+.1f}%  {int(row['현재가']):,}원")
-        headline = get_news_headline(row["종목명"])
-        if headline:
-            fall_lines.append(f"   └ {headline}")
+        marker = "🔁" if row["종목명"] in fall_consecutive else ""
+        fall_lines.append(f"{i+1}. {marker}{row['종목명']}  {row['등락률']:+.1f}%  {int(row['현재가']):,}원")
+        if row.get("뉴스"):
+            fall_lines.append(f"   └ {row['뉴스']}")
+
+    if rise_consecutive or fall_consecutive:
+        fall_lines.append("\n🔁 = 전일에 이어 연속 등장")
 
     return "\n".join(rise_lines), "\n".join(fall_lines)
 
@@ -125,7 +179,22 @@ if __name__ == "__main__":
     top_rise, top_fall = get_top_movers()
 
     print("뉴스 헤드라인 수집 중...")
-    rise_msg, fall_msg = format_message(top_rise, top_fall)
+    for df in [top_rise, top_fall]:
+        df["뉴스"] = df["종목명"].apply(get_news_headline)
+
+    print("노션 연속 종목 조회 중...")
+    rise_consecutive = get_yesterday_names("급등")
+    fall_consecutive = get_yesterday_names("급락")
+
+    print(f"연속 급등: {rise_consecutive}")
+    print(f"연속 급락: {fall_consecutive}")
+
+    print("노션 저장 중...")
+    save_to_notion(top_rise, "급등", rise_consecutive)
+    save_to_notion(top_fall, "급락", fall_consecutive)
+
+    print("카카오톡 메시지 작성 중...")
+    rise_msg, fall_msg = format_message(top_rise, top_fall, rise_consecutive, fall_consecutive)
     print(rise_msg)
     print(fall_msg)
 
