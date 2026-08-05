@@ -49,16 +49,34 @@ def fetch_rank(sosok, page_type):
     return pd.DataFrame()
 
 
+ETF_KEYWORDS = [
+    "인버스", "레버리지", "선물", "곱버스",
+    "KODEX", "TIGER", "ARIRANG", "KINDEX", "KOSEF",
+    "SOL", "ACE", "HANARO", "KBSTAR", "TIMEFOLIO",
+    "PLUS", "RISE", "WOORI", "HANWHA", "KB스타",
+    "ETF", "ETN", "2X", "3X",
+]
+
+
+def is_pure_stock(name):
+    name_upper = name.upper()
+    return not any(kw.upper() in name_upper for kw in ETF_KEYWORDS)
+
+
 def get_top_movers():
     top_rise = pd.concat([
         fetch_rank("0", "sise_rise"),
         fetch_rank("1", "sise_rise"),
-    ]).nlargest(10, "등락률").reset_index(drop=True)
+    ])
+    top_rise = top_rise[top_rise["종목명"].apply(is_pure_stock)]
+    top_rise = top_rise.nlargest(10, "등락률").reset_index(drop=True)
 
     top_fall = pd.concat([
         fetch_rank("0", "sise_fall"),
         fetch_rank("1", "sise_fall"),
-    ]).nsmallest(10, "등락률").reset_index(drop=True)
+    ])
+    top_fall = top_fall[top_fall["종목명"].apply(is_pure_stock)]
+    top_fall = top_fall.nsmallest(10, "등락률").reset_index(drop=True)
 
     return top_rise, top_fall
 
