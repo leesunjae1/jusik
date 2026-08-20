@@ -1,9 +1,7 @@
 name: Daily Stock Alert
 
 on:
-  schedule:
-    - cron: '30 0 * * 1-5'  # 평일 오전 9:30 KST (UTC 00:30)
-  workflow_dispatch:         # 수동 실행 가능
+  workflow_dispatch:         # 수동 실행만 가능 (자동 스케줄 비활성화)
 
 jobs:
   send-alert:
